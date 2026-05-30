@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rescatadores de Películas</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #0f380f;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-family: monospace;
+}
+#game-container {
+  position: relative;
+  display: inline-block;
+}
+/* Marco Game Boy */
+#gameboy-frame {
+  background: #8bac0f;
+  border-radius: 12px 12px 40px 40px;
+  padding: 20px 24px 60px 24px;
+  box-shadow: 4px 4px 0 #306230, 8px 8px 0 #0f380f;
+  position: relative;
+}
+#screen-bezel {
+  background: #1a2f1a;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: inset 2px 2px 8px rgba(0,0,0,0.8);
+}
+canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+#gameboy-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  padding: 0 8px;
+}
+.dpad {
+  display: grid;
+  grid-template-columns: 20px 20px 20px;
+  grid-template-rows: 20px 20px 20px;
+  gap: 1px;
+}
+.dpad button {
+  background: #306230;
+  border: none;
+  border-radius: 2px;
+  color: #9bbc0f;
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dpad button:active { background: #0f380f; }
+.dpad .center { background: #1a2f1a; }
+.ab-buttons {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.btn-ab {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: #9b1c1c;
+  color: white;
+  font-size: 10px;
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 #5a0f0f;
+}
+.btn-ab:active { box-shadow: none; transform: translate(2px,2px); }
+.start-select {
+  display: flex;
+  gap: 6px;
+  margin-top: 16px;
+  justify-content: center;
+}
+.btn-ss {
+  background: #306230;
+  border: none;
+  border-radius: 10px;
+  color: #9bbc0f;
+  font-size: 8px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.logo-text {
+  text-align: center;
+  color: #306230;
+  font-size: 9px;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+</style>
+</head>
+<body>
+<div id="game-container">
+  <div id="gameboy-frame">
+    <div class="logo-text">◆ NdH · Game ◆</div>
+    <div id="screen-bezel">
+      <canvas id="gameCanvas" width="320" height="288"></canvas>
+    </div>
+    <div class="start-select">
+      <button class="btn-ss" id="btn-select">SELECT</button>
+      <button class="btn-ss" id="btn-start">START</button>
+    </div>
+    <div id="gameboy-bottom">
+      <div class="dpad">
+        <div></div>
+        <button id="btn-up">▲</button>
+        <div></div>
+        <button id="btn-left">◄</button>
+        <div class="center"></div>
+        <button id="btn-right">►</button>
+        <div></div>
+        <button id="btn-down">▼</button>
+        <div></div>
+      </div>
+      <div class="ab-buttons">
+        <button class="btn-ab" id="btn-b">B</button>
+        <button class="btn-ab" id="btn-a">A</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════
+// RESCATADORES DE PELÍCULAS — Motor Game Boy
+// ═══════════════════════════════════════════════
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+const W = 320, H = 288;
+
+// Paleta Game Boy
+const GB = {
+  darkest: '#0f380f',
+  dark:    '#306230',
+  light:   '#8bac0f',
+  lightest:'#9bbc0f',
+};
+
+// Estado del juego
+const STATES = { TITLE: 0, SELECT: 1, PLAY: 2, GAMEOVER: 3 };
+let state = STATES.TITLE;
+let selectedChar = 0; // 0=Archivista, 1=Freak
+
+// Input
+const keys = {};
+const justPressed = {};
+document.addEventListener('keydown', e => {
+  if (!keys[e.code]) justPressed[e.code] = true;
+  keys[e.code] = true;
+  e.preventDefault();
+});
+document.addEventListener('keyup', e => { keys[e.code] = false; });
+
+// Botones táctiles
+const btnMap = {
+  'btn-left':  'ArrowLeft',
+  'btn-right': 'ArrowRight',
+  'btn-up':    'ArrowUp',
+  'btn-down':  'ArrowDown',
+  'btn-a':     'KeyZ',
+  'btn-b':     'KeyX',
+  'btn-start': 'Enter',
+  'btn-select':'ShiftLeft',
+};
+Object.entries(btnMap).forEach(([id, code]) => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('mousedown', () => { keys[code] = true; justPressed[code] = true; });
+  el.addEventListener('mouseup', () => { keys[code] = false; });
+  el.addEventListener('touchstart', e => { e.preventDefault(); keys[code] = true; justPressed[code] = true; });
+  el.addEventListener('touchend', e => { e.preventDefault(); keys[code] = false; });
+});
+
+// ─── SPRITES (dibujados en canvas sin imágenes externas) ───────────────────
+
+// Archivista en pixel art Game Boy (16x24 pixels escalados)
+const ARCH_PIXELS = [
+  // Idle frame 1 — 16x24
+  // Cabeza
+  '0000011100000000',
+  '0000122100000000',
+  '0001221100000000',
+  '0011222110000000',
+  '0012232210000000',
+  '0012233210000000',
+  '0001122100000000',
+  '0000111000000000',
+  // Cuerpo
+  '0001333100000000',
+  '0011333310000000',
+  '0113333331000000',
+  '0013333310000000',
+  '0001333100000000',
+  '0001313100000000',
+  // Piernas
+  '0001313100000000',
+  '0001313100000000',
+  '0001111100000000',
+  '0000111000000000',
+  '0001101100000000',
+  '0001101100000000',
+  '0000110100000000',
+  '0000100100000000',
+  '0000000000000000',
+  '0000000000000000',
+];
+
+function drawGB(pixels, x, y, scale, flip=false) {
+  const colors = [null, GB.darkest, GB.dark, GB.light, GB.lightest];
+  pixels.forEach((row, py) => {
+    [...row].forEach((c, px) => {
+      if (c === '0') return;
+      ctx.fillStyle = colors[parseInt(c)];
+      const drawX = flip ? x + (row.length - 1 - px) * scale : x + px * scale;
+      ctx.fillRect(drawX, y + py * scale, scale, scale);
+    });
+  });
+}
+
+// Personaje simple en pixel art (para prototipo rápido)
+function drawCharacter(char, x, y, frame, flip=false) {
+  const scale = 2;
+  ctx.save();
+  
+  // Sombra
+  ctx.fillStyle = GB.dark;
+  ctx.fillRect(x + 2, y + 44, 20, 3);
+  
+  if (char === 0) { // Archivista
+    // Pelo
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(x+6, y+0, 12, 6);
+    ctx.fillRect(x+4, y+2, 16, 6);
+    // Cara
+    ctx.fillStyle = GB.lightest;
+    ctx.fillRect(x+5, y+6, 14, 12);
+    // Gafas
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(x+6, y+10, 4, 3);
+    ctx.fillRect(x+12, y+10, 4, 3);
+    ctx.fillRect(x+10, y+11, 2, 1);
+    // Cuerpo (chaqueta verde)
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(x+4, y+18, 16, 14);
+    ctx.fillStyle = GB.lightest;
+    ctx.fillRect(x+9, y+18, 6, 8); // camisa
+    // Animación caminar
+    const legFrame = Math.floor(frame / 6) % 4;
+    ctx.fillStyle = GB.darkest;
+    if (legFrame === 0) {
+      ctx.fillRect(x+5, y+32, 5, 10);
+      ctx.fillRect(x+12, y+32, 5, 10);
+    } else if (legFrame === 1) {
+      ctx.fillRect(x+5, y+32, 5, 8);
+      ctx.fillRect(x+11, y+34, 6, 8);
+    } else if (legFrame === 2) {
+      ctx.fillRect(x+5, y+32, 5, 10);
+      ctx.fillRect(x+12, y+32, 5, 10);
+    } else {
+      ctx.fillRect(x+4, y+34, 6, 8);
+      ctx.fillRect(x+12, y+32, 5, 8);
+    }
+    // Zapatos
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(x+4, y+42, 7, 3);
+    ctx.fillRect(x+12, y+42, 7, 3);
+    // Brazo con lupa
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(flip ? x+0 : x+20, y+20, 5, 8);
+    ctx.fillStyle = GB.lightest;
+    ctx.fillRect(flip ? x+0 : x+21, y+27, 4, 4);
+    
+  } else { // Freak del Cine
+    // Gorra
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(x+3, y+0, 18, 4);
+    ctx.fillRect(x+5, y+4, 14, 2);
+    // Cara
+    ctx.fillStyle = GB.lightest;
+    ctx.fillRect(x+5, y+6, 14, 12);
+    // Ojo expresivo
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(x+7, y+10, 4, 3);
+    ctx.fillRect(x+13, y+10, 4, 3);
+    ctx.fillStyle = GB.lightest;
+    ctx.fillRect(x+8, y+10, 2, 2);
+    ctx.fillRect(x+14, y+10, 2, 2);
+    // Cuerpo (chaqueta azul → dark)
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(x+4, y+18, 16, 14);
+    // Mochila
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(flip ? x+18 : x+0, y+20, 6, 10);
+    ctx.fillStyle = GB.light;
+    ctx.fillRect(flip ? x+19 : x+1, y+22, 4, 3);
+    // Piernas animadas
+    const legFrame = Math.floor(frame / 5) % 4;
+    ctx.fillStyle = GB.darkest;
+    if (legFrame === 0 || legFrame === 2) {
+      ctx.fillRect(x+5, y+32, 5, 10);
+      ctx.fillRect(x+12, y+32, 5, 10);
+    } else if (legFrame === 1) {
+      ctx.fillRect(x+3, y+32, 6, 8);
+      ctx.fillRect(x+12, y+34, 6, 8);
+    } else {
+      ctx.fillRect(x+5, y+34, 6, 8);
+      ctx.fillRect(x+13, y+32, 6, 8);
+    }
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(x+4, y+42, 7, 3);
+    ctx.fillRect(x+12, y+42, 7, 3);
+  }
+  ctx.restore();
+}
+
+// ─── NIVEL ─────────────────────────────────────────────────────────────────
+
+function createLevel() {
+  return {
+    platforms: [
+      // Suelo
+      {x:0, y:250, w:2000, h:40},
+      // Plataformas
+      {x:200, y:200, w:80, h:12},
+      {x:350, y:170, w:100, h:12},
+      {x:500, y:200, w:80, h:12},
+      {x:650, y:160, w:120, h:12},
+      {x:820, y:190, w:80, h:12},
+      {x:950, y:150, w:100, h:12},
+      {x:1100, y:180, w:80, h:12},
+      {x:1250, y:140, w:120, h:12},
+      {x:1450, y:200, w:100, h:12},
+      {x:1600, y:170, w:80, h:12},
+      {x:1750, y:200, w:80, h:12},
+      {x:1900, y:160, w:120, h:12},
+    ],
+    latas: [
+      {x:230, y:180, type:'8mm', val:10, collected:false},
+      {x:380, y:150, type:'16mm', val:30, collected:false},
+      {x:520, y:180, type:'8mm', val:10, collected:false},
+      {x:680, y:140, type:'35mm', val:100, collected:false},
+      {x:720, y:140, type:'8mm', val:10, collected:false},
+      {x:850, y:170, type:'16mm', val:30, collected:false},
+      {x:980, y:130, type:'35mm', val:100, collected:false},
+      {x:1130, y:160, type:'8mm', val:10, collected:false},
+      {x:1280, y:120, type:'16mm', val:30, collected:false},
+      {x:1320, y:120, type:'8mm', val:10, collected:false},
+      {x:1480, y:180, type:'8mm', val:10, collected:false},
+      {x:1630, y:150, type:'16mm', val:30, collected:false},
+      {x:1780, y:180, type:'8mm', val:10, collected:false},
+      {x:1930, y:140, type:'35mm', val:100, collected:false},
+      // Nitrato (peligroso)
+      {x:460, y:230, type:'NITRATO', val:-20, collected:false},
+      {x:900, y:230, type:'NITRATO', val:-20, collected:false},
+      {x:1400, y:230, type:'NITRATO', val:-20, collected:false},
+    ],
+    enemies: [
+      {x:300, y:225, dir:1, speed:0.8, w:20, h:20, type:'moho'},
+      {x:700, y:225, dir:-1, speed:1.0, w:20, h:20, type:'moho'},
+      {x:1000, y:225, dir:1, speed:1.2, w:20, h:20, type:'moho'},
+      {x:1500, y:225, dir:-1, speed:0.9, w:20, h:20, type:'humedad'},
+      {x:1800, y:225, dir:1, speed:1.1, w:20, h:20, type:'moho'},
+    ],
+    scrollX: 0,
+    endX: 1950,
+  };
+}
+
+// ─── JUGADOR ───────────────────────────────────────────────────────────────
+
+function createPlayer(charIdx) {
+  return {
+    x: 50, y: 200,
+    vx: 0, vy: 0,
+    w: 24, h: 46,
+    onGround: false,
+    char: charIdx,
+    frame: 0,
+    facing: 1, // 1=derecha, -1=izquierda
+    hp: 3,
+    score: 0,
+    invincible: 0,
+    dead: false,
+  };
+}
+
+let player, level, gameTimer, titleAnim;
+
+function initGame() {
+  player = createPlayer(selectedChar);
+  level = createLevel();
+  gameTimer = 0;
+  titleAnim = 0;
+}
+
+// ─── FÍSICA ────────────────────────────────────────────────────────────────
+
+function updatePlayer() {
+  if (player.dead) return;
+  
+  const speed = selectedChar === 0 ? 2.2 : 2.8;
+  const jumpForce = selectedChar === 0 ? -7.5 : -8.0;
+  
+  // Input horizontal
+  if (keys['ArrowLeft'] || keys['KeyA']) {
+    player.vx = -speed;
+    player.facing = -1;
+  } else if (keys['ArrowRight'] || keys['KeyD']) {
+    player.vx = speed;
+    player.facing = 1;
+  } else {
+    player.vx *= 0.75;
+  }
+  
+  // Salto
+  if ((justPressed['ArrowUp'] || justPressed['KeyZ'] || justPressed['Space']) && player.onGround) {
+    player.vy = jumpForce;
+    player.onGround = false;
+  }
+  
+  // Gravedad
+  player.vy += 0.45;
+  player.vy = Math.min(player.vy, 12);
+  
+  // Mover
+  player.x += player.vx;
+  player.y += player.vy;
+  
+  // Límite izquierdo
+  if (player.x < level.scrollX) player.x = level.scrollX;
+  
+  // Colisión con plataformas
+  player.onGround = false;
+  for (const plat of level.platforms) {
+    const px = plat.x - level.scrollX;
+    if (player.x + player.w > px && player.x < px + plat.w) {
+      // Desde arriba
+      if (player.y + player.h > plat.y && player.y + player.h < plat.y + plat.h + player.vy + 1 && player.vy >= 0) {
+        player.y = plat.y - player.h;
+        player.vy = 0;
+        player.onGround = true;
+      }
+      // Desde abajo
+      else if (player.y < plat.y + plat.h && player.y > plat.y && player.vy < 0) {
+        player.y = plat.y + plat.h;
+        player.vy = 0;
+      }
+    }
+  }
+  
+  // Muerto si cae
+  if (player.y > H + 50) {
+    player.hp--;
+    if (player.hp <= 0) { player.dead = true; }
+    else { player.x = level.scrollX + 50; player.y = 100; player.vy = 0; }
+  }
+  
+  // Scroll de cámara
+  const screenCenter = W / 2;
+  const playerScreen = player.x - level.scrollX;
+  if (playerScreen > screenCenter + 40) {
+    level.scrollX += playerScreen - (screenCenter + 40);
+  }
+  if (playerScreen < screenCenter - 80 && level.scrollX > 0) {
+    level.scrollX -= (screenCenter - 80) - playerScreen;
+    level.scrollX = Math.max(0, level.scrollX);
+  }
+  
+  // Animar
+  if (Math.abs(player.vx) > 0.3) player.frame++;
+  if (player.invincible > 0) player.invincible--;
+  
+  // Recoger latas
+  for (const lata of level.latas) {
+    if (lata.collected) continue;
+    const lx = lata.x - level.scrollX;
+    if (Math.abs(lx - player.x) < 24 && Math.abs(lata.y - player.y) < 30) {
+      lata.collected = true;
+      player.score += lata.val;
+      if (player.score < 0) player.score = 0;
+    }
+  }
+  
+  // Colisión con enemigos
+  if (player.invincible === 0) {
+    for (const enemy of level.enemies) {
+      const ex = enemy.x - level.scrollX;
+      if (Math.abs(ex - player.x) < 20 && Math.abs(enemy.y - player.y) < 30) {
+        player.hp--;
+        player.invincible = 90;
+        player.vy = -5;
+        if (player.hp <= 0) player.dead = true;
+      }
+    }
+  }
+  
+  // Fin de nivel
+  if (player.x > level.endX) {
+    state = STATES.GAMEOVER;
+    gameTimer = 180;
+  }
+}
+
+function updateEnemies() {
+  for (const enemy of level.enemies) {
+    enemy.x += enemy.dir * enemy.speed;
+    // Rebotar en límites
+    if (enemy.x > level.scrollX + W - 20 || enemy.x < level.scrollX + 20) {
+      enemy.dir *= -1;
+    }
+    // Rebotar en bordes del nivel
+    if (enemy.x < 10 || enemy.x > level.endX) enemy.dir *= -1;
+  }
+}
+
+// ─── RENDER ────────────────────────────────────────────────────────────────
+
+function fillGB(color) { ctx.fillStyle = color; ctx.fillRect(0, 0, W, H); }
+
+function drawPlatform(plat) {
+  const x = plat.x - level.scrollX;
+  if (x > W + 20 || x + plat.w < -20) return;
+  // Superficie
+  ctx.fillStyle = GB.darkest;
+  ctx.fillRect(x, plat.y, plat.w, 4);
+  ctx.fillStyle = GB.dark;
+  ctx.fillRect(x, plat.y + 4, plat.w, plat.h - 4);
+  // Textura
+  ctx.fillStyle = GB.darkest;
+  for (let tx = x; tx < x + plat.w; tx += 16) {
+    ctx.fillRect(tx, plat.y + 6, 6, 2);
+  }
+}
+
+function drawLata(lata) {
+  if (lata.collected) return;
+  const x = lata.x - level.scrollX;
+  if (x < -20 || x > W + 20) return;
+  
+  const bob = Math.sin(gameTimer * 0.08 + lata.x * 0.1) * 2;
+  const y = lata.y + bob;
+  
+  if (lata.type === 'NITRATO') {
+    // Barril peligroso
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(x - 8, y - 8, 16, 16);
+    ctx.fillStyle = GB.light;
+    ctx.fillRect(x - 6, y - 6, 12, 12);
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(x - 4, y - 2, 8, 3);
+    // Calavera simple
+    ctx.fillStyle = GB.lightest;
+    ctx.fillRect(x - 3, y - 5, 6, 5);
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(x - 2, y - 4, 2, 2);
+    ctx.fillRect(x + 1, y - 4, 2, 2);
+  } else {
+    // Lata de película
+    const colors = { '8mm': GB.light, '16mm': GB.dark, '35mm': GB.darkest };
+    ctx.fillStyle = GB.darkest;
+    ctx.beginPath();
+    ctx.ellipse(x, y, 9, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = colors[lata.type];
+    ctx.beginPath();
+    ctx.ellipse(x, y, 7, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Centro
+    ctx.fillStyle = GB.darkest;
+    ctx.beginPath();
+    ctx.ellipse(x, y, 3, 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Label
+    ctx.fillStyle = GB.lightest;
+    ctx.font = '5px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(lata.type === '35mm' ? '35' : lata.type === '16mm' ? '16' : '8', x, y + 2);
+  }
+}
+
+function drawEnemy(enemy) {
+  const x = enemy.x - level.scrollX;
+  if (x < -30 || x > W + 30) return;
+  const y = enemy.y;
+  const flip = enemy.dir < 0;
+  
+  if (enemy.type === 'moho') {
+    // Blob de moho
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(x - 10, y - 12, 20, 18);
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(x - 8, y - 10, 16, 14);
+    // Manchas
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(x - 5, y - 8, 4, 4);
+    ctx.fillRect(x + 3, y - 5, 3, 3);
+    ctx.fillRect(x - 2, y - 3, 5, 3);
+    // Ojos malvados
+    ctx.fillStyle = GB.lightest;
+    ctx.fillRect(x - 6, y - 9, 3, 2);
+    ctx.fillRect(x + 3, y - 9, 3, 2);
+  } else {
+    // Humedad — gota azul-gris
+    ctx.fillStyle = GB.dark;
+    ctx.fillRect(x - 8, y - 14, 16, 20);
+    ctx.fillStyle = GB.light;
+    ctx.fillRect(x - 6, y - 12, 12, 16);
+    ctx.fillRect(x - 2, y - 16, 4, 6);
+    ctx.fillStyle = GB.lightest;
+    ctx.fillRect(x - 4, y - 10, 3, 4);
+  }
+}
+
+function drawHUD() {
+  // Fondo HUD
+  ctx.fillStyle = GB.darkest;
+  ctx.fillRect(0, 0, W, 20);
+  ctx.fillStyle = GB.light;
+  ctx.fillRect(0, 20, W, 1);
+  
+  ctx.fillStyle = GB.lightest;
+  ctx.font = '8px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('SCORE:' + player.score, 4, 14);
+  
+  // HP corazones
+  ctx.textAlign = 'center';
+  ctx.fillText('HP:', 220, 14);
+  for (let i = 0; i < 3; i++) {
+    ctx.fillStyle = i < player.hp ? GB.lightest : GB.dark;
+    ctx.fillRect(238 + i * 14, 6, 10, 10);
+    if (i < player.hp) {
+      ctx.fillStyle = GB.darkest;
+      ctx.fillRect(239 + i * 14, 7, 3, 3);
+      ctx.fillRect(245 + i * 14, 7, 3, 3);
+      ctx.fillRect(239 + i * 14, 10, 8, 4);
+    }
+  }
+  
+  // Personaje seleccionado
+  ctx.fillStyle = GB.light;
+  ctx.font = '6px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(selectedChar === 0 ? 'ARCHIVISTA' : 'FREAK', W - 4, 8);
+}
+
+function drawBackground() {
+  // Cielo
+  fillGB(GB.lightest);
+  
+  // Nubes (paralaje)
+  ctx.fillStyle = GB.light;
+  const cloudOffset = level.scrollX * 0.2;
+  [[50,40],[150,30],[280,50],[400,35],[550,45],[700,30]].forEach(([cx, cy]) => {
+    const x = (cx - cloudOffset % 800 + 800) % 800;
+    ctx.fillRect(x - 20, cy, 40, 12);
+    ctx.fillRect(x - 14, cy - 6, 28, 8);
+  });
+  
+  // Suelo lejano
+  ctx.fillStyle = GB.dark;
+  ctx.fillRect(0, 240, W, 50);
+  
+  // Montañas
+  ctx.fillStyle = GB.dark;
+  const mOffset = level.scrollX * 0.3;
+  [60, 160, 260, 360, 460, 560, 660, 760].forEach(mx => {
+    const x = (mx - mOffset % 800 + 800) % 800;
+    ctx.beginPath();
+    ctx.moveTo(x - 40, 240);
+    ctx.lineTo(x, 190);
+    ctx.lineTo(x + 40, 240);
+    ctx.fill();
+  });
+}
+
+function drawTitleScreen() {
+  fillGB(GB.lightest);
+  titleAnim++;
+  
+  // Título
+  ctx.fillStyle = GB.darkest;
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('RESCATADORES', W/2, 60);
+  ctx.fillText('DE PELÍCULAS', W/2, 78);
+  
+  ctx.fillStyle = GB.dark;
+  ctx.font = '8px monospace';
+  ctx.fillText('─── NdH GAMES ───', W/2, 95);
+  
+  // Lata animada
+  const bob = Math.sin(titleAnim * 0.05) * 5;
+  ctx.fillStyle = GB.darkest;
+  ctx.beginPath();
+  ctx.ellipse(W/2, 140 + bob, 22, 22, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = GB.dark;
+  ctx.beginPath();
+  ctx.ellipse(W/2, 140 + bob, 18, 18, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = GB.darkest;
+  ctx.beginPath();
+  ctx.ellipse(W/2, 140 + bob, 6, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = GB.lightest;
+  ctx.font = '8px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('35mm', W/2, 143 + bob);
+  
+  // Parpadeo PRESS START
+  if (Math.floor(titleAnim / 30) % 2 === 0) {
+    ctx.fillStyle = GB.darkest;
+    ctx.font = '8px monospace';
+    ctx.fillText('PRESS START / ENTER', W/2, 200);
+  }
+  
+  ctx.fillStyle = GB.dark;
+  ctx.font = '6px monospace';
+  ctx.fillText('Rescata películas · Evita el nitrato', W/2, 260);
+  ctx.fillText('Derrota al Moho y la Humedad', W/2, 270);
+}
+
+function drawSelectScreen() {
+  fillGB(GB.light);
+  titleAnim++;
+  
+  ctx.fillStyle = GB.darkest;
+  ctx.font = 'bold 10px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('ELIGE TU PERSONAJE', W/2, 25);
+  
+  // Archivista
+  const aSelected = selectedChar === 0;
+  ctx.fillStyle = aSelected ? GB.darkest : GB.dark;
+  ctx.fillRect(20, 40, 120, 180);
+  ctx.fillStyle = aSelected ? GB.lightest : GB.light;
+  ctx.fillRect(22, 42, 116, 176);
+  
+  drawCharacter(0, 55, 70, titleAnim, false);
+  
+  ctx.fillStyle = GB.darkest;
+  ctx.font = aSelected ? 'bold 8px monospace' : '7px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('ARCHIVISTA', 80, 145);
+  ctx.font = '6px monospace';
+  ctx.fillText('Salto preciso', 80, 158);
+  ctx.fillText('Habilidad:', 80, 168);
+  ctx.fillText('RESTAURAR', 80, 178);
+  
+  // Freak
+  const fSelected = selectedChar === 1;
+  ctx.fillStyle = fSelected ? GB.darkest : GB.dark;
+  ctx.fillRect(180, 40, 120, 180);
+  ctx.fillStyle = fSelected ? GB.lightest : GB.light;
+  ctx.fillRect(182, 42, 116, 176);
+  
+  drawCharacter(1, 215, 70, titleAnim, false);
+  
+  ctx.fillStyle = GB.darkest;
+  ctx.font = fSelected ? 'bold 8px monospace' : '7px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('FREAK DEL CINE', 240, 145);
+  ctx.font = '6px monospace';
+  ctx.fillText('Más velocidad', 240, 158);
+  ctx.fillText('Habilidad:', 240, 168);
+  ctx.fillText('PROYECTAR', 240, 178);
+  
+  // Selector
+  ctx.fillStyle = GB.darkest;
+  ctx.font = '8px monospace';
+  ctx.fillText('◄ / ► ELEGIR   START JUGAR', W/2, 245);
+  
+  if (Math.floor(titleAnim / 20) % 2 === 0) {
+    ctx.fillStyle = GB.darkest;
+    ctx.fillRect(selectedChar === 0 ? 22 : 182, 42, 4, 176);
+    ctx.fillRect(selectedChar === 0 ? 134 : 294, 42, 4, 176);
+  }
+}
+
+function drawGameOver() {
+  // Fondo semitransparente
+  ctx.fillStyle = GB.darkest;
+  ctx.globalAlpha = 0.7;
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
+  
+  ctx.fillStyle = GB.lightest;
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'center';
+  
+  if (player.dead) {
+    ctx.fillText('GAME OVER', W/2, H/2 - 20);
+    ctx.font = '8px monospace';
+    ctx.fillText('SCORE: ' + player.score, W/2, H/2);
+  } else {
+    ctx.fillText('¡NIVEL COMPLETADO!', W/2, H/2 - 30);
+    ctx.font = '10px monospace';
+    ctx.fillText('SCORE: ' + player.score, W/2, H/2 - 10);
+    ctx.font = '8px monospace';
+    ctx.fillText('¡Películas rescatadas!', W/2, H/2 + 10);
+  }
+  
+  if (Math.floor(gameTimer / 30) % 2 === 0 || gameTimer > 0) {
+    ctx.font = '7px monospace';
+    ctx.fillText('PRESS START para continuar', W/2, H/2 + 50);
+  }
+  
+  if (gameTimer > 0) gameTimer--;
+}
+
+// ─── LOOP ──────────────────────────────────────────────────────────────────
+
+function update() {
+  gameTimer++;
+  
+  if (state === STATES.TITLE) {
+    if (justPressed['Enter'] || justPressed['Space']) {
+      state = STATES.SELECT;
+      titleAnim = 0;
+    }
+  } else if (state === STATES.SELECT) {
+    if (justPressed['ArrowLeft'] || justPressed['ArrowRight']) {
+      selectedChar = selectedChar === 0 ? 1 : 0;
+    }
+    if (justPressed['Enter']) {
+      state = STATES.PLAY;
+      initGame();
+    }
+  } else if (state === STATES.PLAY) {
+    updatePlayer();
+    updateEnemies();
+    if (player.dead) { state = STATES.GAMEOVER; gameTimer = 180; }
+  } else if (state === STATES.GAMEOVER) {
+    if (gameTimer <= 0 && (justPressed['Enter'] || justPressed['Space'])) {
+      state = STATES.TITLE;
+      titleAnim = 0;
+    }
+    if (gameTimer > 0) gameTimer--;
+  }
+  
+  // Limpiar justPressed
+  Object.keys(justPressed).forEach(k => delete justPressed[k]);
+}
+
+function render() {
+  ctx.clearRect(0, 0, W, H);
+  
+  if (state === STATES.TITLE) {
+    drawTitleScreen();
+  } else if (state === STATES.SELECT) {
+    drawSelectScreen();
+  } else if (state === STATES.PLAY || state === STATES.GAMEOVER) {
+    if (state === STATES.PLAY || state === STATES.GAMEOVER) {
+      drawBackground();
+      
+      // Plataformas
+      for (const plat of level.platforms) drawPlatform(plat);
+      
+      // Latas
+      for (const lata of level.latas) drawLata(lata);
+      
+      // Enemigos
+      for (const enemy of level.enemies) drawEnemy(enemy);
+      
+      // Jugador (parpadeo si invencible)
+      if (player.invincible === 0 || Math.floor(player.invincible / 6) % 2 === 0) {
+        drawCharacter(player.char, player.x - level.scrollX - 12, player.y - 14, player.frame, player.facing < 0);
+      }
+      
+      // Indicador fin de nivel
+      const endX = level.endX - level.scrollX;
+      if (endX > 0 && endX < W) {
+        ctx.fillStyle = GB.darkest;
+        ctx.fillRect(endX - 4, 30, 8, 220);
+        ctx.fillStyle = GB.lightest;
+        ctx.font = '7px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('META', endX, 25);
+        // Bandera
+        ctx.fillStyle = GB.darkest;
+        ctx.fillRect(endX, 30, 16, 12);
+        ctx.fillStyle = GB.lightest;
+        ctx.fillRect(endX + 2, 32, 12, 8);
+      }
+      
+      drawHUD();
+    }
+    
+    if (state === STATES.GAMEOVER) drawGameOver();
+  }
+}
+
+function loop() {
+  update();
+  render();
+  requestAnimationFrame(loop);
+}
+
+// Iniciar
+titleAnim = 0;
+loop();
+</script>
+</body>
+</html>
