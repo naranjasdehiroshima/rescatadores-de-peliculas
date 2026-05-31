@@ -196,7 +196,9 @@ var IMG_NAMES = ['moho','clausthofo','fuego_nitrato','arana','censura',
                  'rollo_olvidado','sindrome_vinagre','humedad_boss','olvido',
                  'freak_walk1','freak_walk2','freak_walk3','freak_walk4','freak_walk5',
                  'freak_shoot1','freak_shoot2','freak_shoot3','freak_shoot_wide',
-                 'freak_hit1','freak_hit2'];
+                 'freak_hit1','freak_hit2',
+                 'arch_idle','arch_walk1','arch_walk2','arch_walk3','arch_walk4',
+                 'arch_walk5','arch_walk6','arch_walk7','arch_jump','arch_restore1','arch_restore2'];
 var imgsLoaded = 0;
 IMG_NAMES.forEach(function(n){
   IMG[n] = new Image();
@@ -250,6 +252,14 @@ function drawGB(pixels, x, y, scale, flip=false) {
   });
 }
 
+function getArchivistaSprite(frame, invincible, onGround, vy) {
+  if (invincible > 0 && Math.floor(invincible/6)%2===0) return IMG['arch_idle'];
+  if (!onGround && vy < 0) return IMG['arch_jump'];
+  if (Math.abs(player.vx) < 0.3) return IMG['arch_idle'];
+  var wi = Math.floor(frame/5)%7;
+  return IMG[['arch_walk1','arch_walk2','arch_walk3','arch_walk4','arch_walk5','arch_walk6','arch_walk7'][wi]];
+}
+
 function getFreakSprite(frame, invincible, isShooting) {
   if (invincible > 0 && Math.floor(invincible/6)%2===0) {
     return IMG['freak_hit1'];
@@ -265,6 +275,26 @@ function getFreakSprite(frame, invincible, isShooting) {
 function drawCharacter(char, x, y, frame, flip) {
   ctx.save();
   
+  if (char === 0) {
+    // La Archivista — sprites reales
+    var img = getArchivistaSprite(frame, player ? player.invincible : 0, 
+                                   player ? player.onGround : true,
+                                   player ? player.vy : 0);
+    if (img && img.complete && img.naturalWidth > 0) {
+      var sw = 36, sh = 44;
+      ctx.save();
+      if (flip) {
+        ctx.translate(x + sw/2 + 12, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(img, -sw/2, y, sw, sh);
+      } else {
+        ctx.drawImage(img, x, y, sw, sh);
+      }
+      ctx.restore();
+      return;
+    }
+  }
+
   if (char === 1) {
     // El Freak — usar sprites reales
     var shooting = player && player.shootCooldown > 10;
@@ -1085,7 +1115,7 @@ function render() {
       
       // Jugador (parpadeo si invencible)
       if (player.invincible === 0 || Math.floor(player.invincible / 6) % 2 === 0) {
-        drawCharacter(player.char, player.x - level.scrollX - 12, player.y - player.h + 2, player.frame, player.facing < 0);
+        drawCharacter(player.char, player.x - level.scrollX - 12, player.y - 44, player.frame, player.facing < 0);
       }
       
       // Indicador fin de nivel
