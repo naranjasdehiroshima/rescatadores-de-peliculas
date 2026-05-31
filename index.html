@@ -1115,7 +1115,7 @@ function render() {
       
       // Jugador (parpadeo si invencible)
       if (player.invincible === 0 || Math.floor(player.invincible / 6) % 2 === 0) {
-        drawCharacter(player.char, player.x - level.scrollX - 12, player.y - 44, player.frame, player.facing < 0);
+        drawCharacter(player.char, player.x - level.scrollX - 12, player.y - 38, player.frame, player.facing < 0);
       }
       
       // Indicador fin de nivel
