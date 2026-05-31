@@ -374,11 +374,11 @@ function createLevel() {
       {x:1400, y:230, type:'NITRATO', val:-20, collected:false},
     ],
     enemies: [
-      {x:300, y:225, dir:1, speed:0.8, w:20, h:20, type:'moho'},
-      {x:700, y:225, dir:-1, speed:1.0, w:20, h:20, type:'moho'},
-      {x:1000, y:225, dir:1, speed:1.2, w:20, h:20, type:'moho'},
-      {x:1500, y:225, dir:-1, speed:0.9, w:20, h:20, type:'humedad'},
-      {x:1800, y:225, dir:1, speed:1.1, w:20, h:20, type:'moho'},
+      {x:300, y:225, dir:1, speed:0.8, w:20, h:20, type:'moho', hp:3, hit:0},
+      {x:700, y:225, dir:-1, speed:1.0, w:20, h:20, type:'moho', hp:3, hit:0},
+      {x:1000, y:225, dir:1, speed:1.2, w:20, h:20, type:'moho', hp:3, hit:0},
+      {x:1500, y:225, dir:-1, speed:0.9, w:20, h:20, type:'humedad', hp:3, hit:0},
+      {x:1800, y:225, dir:1, speed:1.1, w:20, h:20, type:'moho', hp:3, hit:0},
     ],
     scrollX: 0,
     endX: 1950,
@@ -400,16 +400,18 @@ function createPlayer(charIdx) {
     score: 0,
     invincible: 0,
     dead: false,
+    shootCooldown: 0,
   };
 }
 
-let player, level, gameTimer, titleAnim;
+let player, level, gameTimer, titleAnim, projectiles = [];
 
 function initGame() {
   player = createPlayer(selectedChar);
   level = createLevel();
   gameTimer = 0;
   titleAnim = 0;
+  projectiles = [];
 }
 
 // ─── FÍSICA ────────────────────────────────────────────────────────────────
@@ -431,6 +433,19 @@ function updatePlayer() {
     player.vx *= 0.75;
   }
   
+  // Disparo con X
+  if (justPressed['KeyX'] && player.shootCooldown <= 0) {
+    projectiles.push({
+      x: player.x + (player.facing > 0 ? player.w : -8),
+      y: player.y + player.h/2 - 2,
+      vx: player.facing * 8,
+      w: 8, h: 4,
+      life: 40
+    });
+    player.shootCooldown = 20;
+  }
+  if (player.shootCooldown > 0) player.shootCooldown--;
+
   // Salto
   if ((justPressed['ArrowUp'] || justPressed['KeyZ'] || justPressed['Space']) && player.onGround) {
     player.vy = jumpForce;
@@ -448,33 +463,27 @@ function updatePlayer() {
   // Límite izquierdo
   if (player.x < level.scrollX) player.x = level.scrollX;
   
-  // Colisión con plataformas — coordenadas de MUNDO (no pantalla)
+  // Colisión con plataformas — separar eje Y
   player.onGround = false;
   for (const plat of level.platforms) {
-    // Todo en coordenadas de mundo
-    const platLeft = plat.x;
-    const platRight = plat.x + plat.w;
-    const platTop = plat.y;
-    const platBottom = plat.y + plat.h;
-    const playerLeft = player.x;
-    const playerRight = player.x + player.w;
-    const playerTop = player.y;
-    const playerBottom = player.y + player.h;
-    const prevBottom = playerBottom - player.vy;
+    const pL = plat.x, pR = plat.x + plat.w;
+    const pT = plat.y, pB = plat.y + plat.h;
+    const eL = player.x, eR = player.x + player.w;
+    const eT = player.y, eB = player.y + player.h;
+    const prevEB = eB - player.vy; // fondo del jugador frame anterior
 
-    // Sin solapamiento horizontal → ignorar
-    if (playerRight <= platLeft || playerLeft >= platRight) continue;
+    if (eR <= pL || eL >= pR) continue; // sin overlap horizontal
 
-    // Cayendo: aterrizar encima de la plataforma
-    if (player.vy >= 0 && prevBottom <= platTop + 2 && playerBottom >= platTop) {
-      player.y = platTop - player.h;
+    // Aterrizaje encima
+    if (player.vy >= 0 && prevEB <= pT && eB >= pT) {
+      player.y = pT - player.h;
       player.vy = 0;
       player.onGround = true;
     }
-    // Subiendo: chocar con la parte inferior
-    else if (player.vy < 0 && playerTop <= platBottom && playerTop - player.vy >= platBottom) {
-      player.y = platBottom;
-      player.vy = 0;
+    // Golpe desde abajo
+    else if (player.vy < 0 && eT <= pB && eT - player.vy >= pB) {
+      player.y = pB;
+      player.vy = 1;
     }
   }
   
@@ -527,6 +536,31 @@ function updatePlayer() {
     state = STATES.GAMEOVER;
     gameTimer = 180;
   }
+}
+
+function updateProjectiles() {
+  for (let i = projectiles.length - 1; i >= 0; i--) {
+    const p = projectiles[i];
+    p.x += p.vx;
+    p.life--;
+    if (p.life <= 0) { projectiles.splice(i,1); continue; }
+    // Colisión con enemigos
+    for (let j = level.enemies.length - 1; j >= 0; j--) {
+      const e = level.enemies[j];
+      if (p.x < e.x + e.w && p.x + p.w > e.x && p.y < e.y + e.h && p.y + p.h > e.y) {
+        projectiles.splice(i,1);
+        e.hp--;
+        e.hit = 12; // frames de parpadeo
+        if (e.hp <= 0) {
+          player.score += e.type === 'humedad' ? 50 : 30;
+          level.enemies.splice(j,1);
+        }
+        break;
+      }
+    }
+  }
+  // Reducir hit timer
+  level.enemies.forEach(function(e){ if(e.hit > 0) e.hit--; });
 }
 
 function updateEnemies() {
@@ -607,6 +641,8 @@ function drawLata(lata) {
 }
 
 function drawEnemy(enemy) {
+  // Parpadeo al recibir daño
+  if (enemy.hit > 0 && Math.floor(enemy.hit / 3) % 2 === 0) return;
   const x = enemy.x - level.scrollX;
   if (x < -30 || x > W + 30) return;
   const y = enemy.y;
@@ -906,6 +942,7 @@ function update() {
   } else if (state === STATES.PLAY) {
     updatePlayer();
     updateEnemies();
+    updateProjectiles();
     if (player.dead) { state = STATES.GAMEOVER; gameTimer = 180; stopMusic(); }
   } else if (state === STATES.GAMEOVER) {
     if (gameTimer <= 0 && (justPressed['Enter'] || justPressed['Space'])) {
@@ -936,6 +973,14 @@ function render() {
       // Latas
       for (const lata of level.latas) drawLata(lata);
       
+      // Proyectiles — destello de proyector
+      for (const p of projectiles) {
+        const sx = p.x - level.scrollX;
+        ctx.fillStyle = GB.lightest;
+        ctx.fillRect(sx, p.y, p.w, p.h);
+        ctx.fillStyle = GB.light;
+        ctx.fillRect(sx + 2, p.y + 1, p.w - 4, p.h - 2);
+      }
       // Enemigos
       for (const enemy of level.enemies) drawEnemy(enemy);
       
