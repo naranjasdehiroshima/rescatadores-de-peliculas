@@ -838,7 +838,52 @@ function drawGameOver() {
   if (gameTimer > 0) gameTimer--;
 }
 
-// ─── LOOP ──────────────────────────────────────────────────────────────────
+// ─── AUDIO ──────────────────────────────────────────────────────────────────
+
+var audioCtx = null;
+var musicBuffer = null;
+var musicSource = null;
+var musicPlaying = false;
+
+function initAudio() {
+  if (audioCtx) return;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    loadTrack('assets/audio/Preservation Team 01 .mp3');
+  } catch(e) { console.log('Audio no disponible'); }
+}
+
+function loadTrack(url) {
+  fetch(url)
+    .then(function(r){ return r.arrayBuffer(); })
+    .then(function(buf){ return audioCtx.decodeAudioData(buf); })
+    .then(function(decoded){
+      musicBuffer = decoded;
+      if (state === STATES.PLAY) playMusic();
+    })
+    .catch(function(e){ console.log('Error cargando audio:', e); });
+}
+
+function playMusic() {
+  if (!audioCtx || !musicBuffer || musicPlaying) return;
+  if (musicSource) { try { musicSource.stop(); } catch(e){} }
+  musicSource = audioCtx.createBufferSource();
+  musicSource.buffer = musicBuffer;
+  musicSource.loop = true;
+  musicSource.connect(audioCtx.destination);
+  musicSource.start(0);
+  musicPlaying = true;
+}
+
+function stopMusic() {
+  if (musicSource) {
+    try { musicSource.stop(); } catch(e) {}
+    musicSource = null;
+  }
+  musicPlaying = false;
+}
+
+
 
 function update() {
   gameTimer++;
@@ -855,11 +900,13 @@ function update() {
     if (justPressed['Enter']) {
       state = STATES.PLAY;
       initGame();
+      initAudio();
+      setTimeout(playMusic, 300);
     }
   } else if (state === STATES.PLAY) {
     updatePlayer();
     updateEnemies();
-    if (player.dead) { state = STATES.GAMEOVER; gameTimer = 180; }
+    if (player.dead) { state = STATES.GAMEOVER; gameTimer = 180; stopMusic(); }
   } else if (state === STATES.GAMEOVER) {
     if (gameTimer <= 0 && (justPressed['Enter'] || justPressed['Space'])) {
       state = STATES.TITLE;
